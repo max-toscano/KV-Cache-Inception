@@ -1,0 +1,567 @@
+{
+  "@context": {
+    "@language": "en",
+    "@vocab": "https://schema.org/",
+    "citeAs": "cr:citeAs",
+    "column": "cr:column",
+    "conformsTo": "dct:conformsTo",
+    "containedIn": "cr:containedIn",
+    "cr": "http://mlcommons.org/croissant/",
+    "rai": "http://mlcommons.org/croissant/RAI/",
+    "data": {
+      "@id": "cr:data",
+      "@type": "@json"
+    },
+    "dataType": {
+      "@id": "cr:dataType",
+      "@type": "@vocab"
+    },
+    "dct": "http://purl.org/dc/terms/",
+    "examples": {
+      "@id": "cr:examples",
+      "@type": "@json"
+    },
+    "extract": "cr:extract",
+    "field": "cr:field",
+    "fileProperty": "cr:fileProperty",
+    "fileObject": "cr:fileObject",
+    "fileSet": "cr:fileSet",
+    "format": "cr:format",
+    "includes": "cr:includes",
+    "isLiveDataset": "cr:isLiveDataset",
+    "jsonPath": "cr:jsonPath",
+    "key": "cr:key",
+    "md5": "cr:md5",
+    "parentField": "cr:parentField",
+    "path": "cr:path",
+    "recordSet": "cr:recordSet",
+    "references": "cr:references",
+    "regex": "cr:regex",
+    "repeated": "cr:repeated",
+    "replace": "cr:replace",
+    "sc": "https://schema.org/",
+    "separator": "cr:separator",
+    "source": "cr:source",
+    "subField": "cr:subField",
+    "transform": "cr:transform"
+  },
+  "@type": "sc:Dataset",
+  "name": "KV-Cache Inception Runtime Interventions (Batch)",
+  "description": "Merged runtime evidence from multiple Reversible MCTS runs in KV-cache latent space. Each record is one MCTS node with telemetry channels, diagnostic classification, OEI/TDS metrics, and reproducibility provenance.",
+  "conformsTo": [
+    "http://mlcommons.org/croissant/1.1",
+    "http://mlcommons.org/croissant/RAI/1.0"
+  ],
+  "license": "https://opensource.org/licenses/MIT",
+  "url": "https://github.com/Logomesh/kv-cache-inception",
+  "version": "0.1.0",
+  "sdVersion": "1.1",
+  "datePublished": "2026-04-19T03:04:50.546108Z",
+  "dateCreated": "2026-04-19T03:04:50.546108Z",
+  "dateModified": "2026-04-19T03:04:50.546108Z",
+  "inLanguage": "en",
+  "keywords": [
+    "alignment-faking detection",
+    "kv-cache intervention",
+    "reversible mcts",
+    "latent telemetry"
+  ],
+  "creator": {
+    "@type": "sc:Organization",
+    "name": "LogoMesh Research Team"
+  },
+  "publisher": {
+    "@type": "sc:Organization",
+    "name": "LogoMesh Research Team"
+  },
+  "distribution": [
+    {
+      "@type": "cr:FileObject",
+      "@id": "interventions-csv",
+      "name": "data/interventions.csv",
+      "contentUrl": "data/interventions.csv",
+      "encodingFormat": "text/csv",
+      "sha256": "25c37aedefb062097e5d37a71a2add42245bc7c8685b49b18ea3466c50e0b3ed"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "source-run-001",
+      "name": "data/sources/source_run_001.json",
+      "contentUrl": "data/sources/source_run_001.json",
+      "encodingFormat": "application/json",
+      "sha256": "72b9af55666c08e0c2695a8ebc374f68fe0787bfaf8cb4164c00769e3edd185b"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "source-run-002",
+      "name": "data/sources/source_run_002.json",
+      "contentUrl": "data/sources/source_run_002.json",
+      "encodingFormat": "application/json",
+      "sha256": "458c4d1a421e9aa18af61b38bb79a293c430e9fb98a0f0732b47a0d4ab30abd4"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "source-run-003",
+      "name": "data/sources/source_run_003.json",
+      "contentUrl": "data/sources/source_run_003.json",
+      "encodingFormat": "application/json",
+      "sha256": "4c80d8df96e3da4fa890aacf15df630befd9da015c9775d26b0d932047f1a2e8"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "source-run-004",
+      "name": "data/sources/source_run_004.json",
+      "contentUrl": "data/sources/source_run_004.json",
+      "encodingFormat": "application/json",
+      "sha256": "b506e968562e062ae5398adb7bbdd8ef82df39b39a976a8a98524b74660c8d15"
+    },
+    {
+      "@type": "cr:FileObject",
+      "@id": "source-run-005",
+      "name": "data/sources/source_run_005.json",
+      "contentUrl": "data/sources/source_run_005.json",
+      "encodingFormat": "application/json",
+      "sha256": "10b12f1127ac257b6ade25ce5fa6186d8dfe75b15237fb88b073bc194640c553"
+    }
+  ],
+  "recordSet": [
+    {
+      "@type": "cr:RecordSet",
+      "@id": "interventions",
+      "name": "interventions",
+      "description": "One record per MCTS node exported from run_kv_mcts runtime artifacts, including telemetry, reward, OEI/TDS, and provenance.",
+      "key": [
+        {
+          "@id": "interventions/artifact_id"
+        }
+      ],
+      "field": [
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/artifact_id",
+          "name": "artifact_id",
+          "description": "Stable intervention record identifier.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "artifact_id"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/run_artifact_path",
+          "name": "run_artifact_path",
+          "description": "Relative path to the raw run artifact JSON snapshot.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "run_artifact_path"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/model_id",
+          "name": "model_id",
+          "description": "Model identifier used for generation.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "model_id"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/seed",
+          "name": "seed",
+          "description": "Global random seed for the run.",
+          "dataType": "sc:Integer",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "seed"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/git_sha",
+          "name": "git_sha",
+          "description": "Git commit SHA at run time.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "git_sha"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/git_dirty",
+          "name": "git_dirty",
+          "description": "Whether the git worktree was dirty at run time.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "git_dirty"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/run_started_utc",
+          "name": "run_started_utc",
+          "description": "UTC timestamp when run started.",
+          "dataType": "sc:DateTime",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "run_started_utc"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/run_finished_utc",
+          "name": "run_finished_utc",
+          "description": "UTC timestamp when run finished.",
+          "dataType": "sc:DateTime",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "run_finished_utc"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/command",
+          "name": "command",
+          "description": "Command line used to produce the run artifact.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "command"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/node_id",
+          "name": "node_id",
+          "description": "MCTS node identifier.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "node_id"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/parent_id",
+          "name": "parent_id",
+          "description": "Parent node identifier, if present.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "parent_id"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/depth",
+          "name": "depth",
+          "description": "Tree depth for this MCTS node.",
+          "dataType": "sc:Integer",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "depth"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/alpha",
+          "name": "alpha",
+          "description": "Steering magnitude applied at this node.",
+          "dataType": "sc:Float",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "alpha"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/intervention_layer",
+          "name": "intervention_layer",
+          "description": "Layer index steered for this node.",
+          "dataType": "sc:Integer",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "intervention_layer"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/visit_count",
+          "name": "visit_count",
+          "description": "Number of visits for this node.",
+          "dataType": "sc:Integer",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "visit_count"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/mean_reward",
+          "name": "mean_reward",
+          "description": "Mean reward for this node.",
+          "dataType": "sc:Float",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "mean_reward"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/oei_score",
+          "name": "oei_score",
+          "description": "Orthogonal Escape Index (OEI) for this node, if available.",
+          "dataType": "sc:Float",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "oei_score"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/sigma_h_mean",
+          "name": "sigma_h_mean",
+          "description": "Mean H-neuron stress across layers.",
+          "dataType": "sc:Float",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "sigma_h_mean"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/rho_r_mean",
+          "name": "rho_r_mean",
+          "description": "Mean RepE honesty projection across layers.",
+          "dataType": "sc:Float",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "rho_r_mean"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/tds_score",
+          "name": "tds_score",
+          "description": "Telemetry divergence score (JSD between channels).",
+          "dataType": "sc:Float",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "tds_score"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/h_neuron_json",
+          "name": "h_neuron_json",
+          "description": "JSON-serialized per-layer H-neuron vector.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "h_neuron_json"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/repe_honesty_json",
+          "name": "repe_honesty_json",
+          "description": "JSON-serialized per-layer RepE honesty vector.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "repe_honesty_json"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/diagnostic_state",
+          "name": "diagnostic_state",
+          "description": "Diagnostic state classification from telemetry_matrix.classify().",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "diagnostic_state"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/textual_compliance",
+          "name": "textual_compliance",
+          "description": "Reserved field for textual compliance label (optional in current phase).",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "textual_compliance"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/ground_truth_label",
+          "name": "ground_truth_label",
+          "description": "Reserved field for independent ground-truth label (optional in current phase).",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "ground_truth_label"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/experiment_id",
+          "name": "experiment_id",
+          "description": "Experiment identifier (for example run_kv_mcts).",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "experiment_id"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/hardware_context",
+          "name": "hardware_context",
+          "description": "Runtime hardware or platform context string.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "hardware_context"
+            }
+          }
+        },
+        {
+          "@type": "cr:Field",
+          "@id": "interventions/audit_hash",
+          "name": "audit_hash",
+          "description": "SHA-256 audit hash derived from key node attributes.",
+          "dataType": "sc:Text",
+          "source": {
+            "fileObject": {
+              "@id": "interventions-csv"
+            },
+            "extract": {
+              "column": "audit_hash"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "rai:dataUseCases": "Safety diagnostics and stress testing of alignment-faking behavior in language model latent representations.",
+  "rai:dataLimitations": "Current export reflects model-internal telemetry and search traces only; independent human ground-truth labels are reserved fields for later phases.",
+  "rai:dataBiases": "Signal quality depends on probe calibration prompts and model family; cross-family comparability requires additional calibration and transfer studies.",
+  "rai:personalSensitiveInformation": "No intentional personal data collection. Any prompts or outputs should be screened via downstream release governance before publication.",
+  "rai:dataReleaseMaintenancePlan": "Versioned with reproducibility metadata (seed, git SHA, command, timestamps) and deterministic audit hashes per intervention record."
+}

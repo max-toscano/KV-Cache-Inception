@@ -675,7 +675,7 @@ score.
 | OEI used in diagnostic classification | Only TDS (JSD) used, not OEI | MEDIUM | Phase 3 |
 | Directional divergence for OE detection | JSD is symmetric (any divergence triggers) | LOW | Phase 3 |
 | Softmax normalization in TDS | Changes interpretation from raw to relative | LOW | Clarify |
-| Dummy OEI fallback with no warning | Produces meaningless scores silently | LOW | Immediate |
+| Dummy OEI fallback with no warning | ~~Produces meaningless scores silently~~ **RESOLVED** — logged + `oei_valid` flag | ~~LOW~~ | ✅ Done |
 
 ---
 
@@ -753,14 +753,11 @@ score.
 - **Fix:** Consider using raw arrays (L1-normalized) instead of softmax, or add a magnitude-based divergence term alongside JSD.
 - **Fix phase:** Clarify in paper or Phase 3
 
-### GAP-C3-09: Dummy OEI calculator fallback is silent
+### GAP-C3-09: Dummy OEI calculator fallback is silent — ✅ RESOLVED
 - **Section:** 5 (OEI)
 - **Severity:** LOW
-- **Paper says:** N/A (implementation detail).
-- **Code does:** `run_kv_mcts.py:182–186` creates a dummy `OEICalculator(NullSpaceProjector(np.ones(1)))` when the probe weight is invalid. This produces OEI values that are meaningless (projecting a d-dimensional hidden state onto the null space of a 1-dimensional weight).
-- **Impact:** Output JSON contains `oei_score` values that look valid but are garbage. No flag distinguishes real vs. dummy OEI in the output.
-- **Fix:** Add a `"oei_valid": true/false` field to the output JSON. Log a warning when the dummy fallback is used.
-- **Fix phase:** Immediate (defensive)
+- **Status:** RESOLVED — Two fixes applied: (1) `except Exception: pass` in `run_async()` OEI computation replaced with `logger.warning(..., exc_info=True)` so failures are logged with traceback. (2) `"oei_valid": true/false` field added to runner JSON output in `_serialise_node()`. Verified 2026-04-30.
+- **Code does:** ~~No flag distinguishes real vs. dummy OEI.~~ Now logs OEI failures and marks validity in output JSON.
 
 ### GAP-C3-10: h_base may not represent true unsteered state for all nodes
 - **Section:** 5 (OEI)

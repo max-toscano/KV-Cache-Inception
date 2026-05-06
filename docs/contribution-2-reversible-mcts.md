@@ -740,7 +740,7 @@ Serialise to JSON: per-node { alpha, depth, reward, telemetry, oei }
 | DynamicCache zero-copy evaluation | Deep copy per evaluation step for DynamicCache | LOW | Optimization |
 | Progressive widening in continuous space | Fixed branching factor, fixed alpha ordering | LOW | Phase 3 |
 | Gate script tests FP32 accumulator | Gate tests copy_ restore, not accumulator | LOW | Phase 3 |
-| 1000 rollback cycles validation | Script defaults to 200, test does 20 | LOW | Config |
+| 1000 rollback cycles validation | ~~Script defaults to 200~~ **RESOLVED** — default now 1000 | ~~LOW~~ | ✅ Done |
 | Perplexity drift measurement | Only tensor norm measured, not perplexity | MEDIUM | Phase 3 |
 
 ---
@@ -792,14 +792,10 @@ Serialise to JSON: per-node { alpha, depth, reward, telemetry, oei }
 - **Fix:** Investigate whether DynamicCache evaluation can use a lighter-weight snapshot that preserves the `.get_seq_length()` API without deep copying all tensors.
 - **Fix phase:** Optimization
 
-### GAP-C2-06: Silent zero fallback on steering vector shape mismatch
+### GAP-C2-06: Silent zero fallback on steering vector shape mismatch — ✅ RESOLVED
 - **Section:** 2 (FP32 Accumulator)
 - **Severity:** LOW
-- **Paper says:** N/A (implementation detail).
-- **Code does:** `_broadcast_to()` returns zero tensors if the steering vector dimension doesn't match the cache's last dimension (lines 364–366). No warning or error.
-- **Impact:** A misconfigured steering direction would produce a valid but meaningless MCTS run — all nodes would have identical telemetry since no actual steering occurs. Debugging would be difficult.
-- **Fix:** Add a warning log when the zero fallback triggers.
-- **Fix phase:** Immediate (defensive)
+- **Status:** RESOLVED — Four fixes applied: (1) `_broadcast_to()` returns `tuple[tensor, bool]` so callers detect failures. (2) `FP32Accumulator.apply()` and `rollback()` use two-pass pre-validation: all broadcasts checked before any accumulator is mutated, preventing partial-application corruption. Returns `bool`. (3) `run_async()` skips phantom nodes entirely when `apply()` returns `False` — no telemetry, no reward, no tree registration. (4) Rollback failure after successful apply raises `RuntimeError` (not `assert`) so it survives `python -O`. Hardened 2026-05-05: `_calibrate_dense()` shape guard rejects 2D input with `ValueError`; `measure_lipschitz_drift.py` checks apply/rollback return values with `RuntimeError`. Verified 2026-05-05.
 
 ### GAP-C2-07: Fixed alpha ordering limits exploration
 - **Section:** 4 (MCTS Algorithm)
@@ -828,14 +824,11 @@ Serialise to JSON: per-node { alpha, depth, reward, telemetry, oei }
 - **Fix:** Add a FP32 accumulator apply/rollback cycle to the gate script as an additional check.
 - **Fix phase:** Phase 3
 
-### GAP-C2-10: Drift validation defaults to 200 cycles
+### GAP-C2-10: Drift validation defaults to 200 cycles — ✅ RESOLVED
 - **Section:** 7 (Theorem 1 Validation)
 - **Severity:** LOW
-- **Paper says:** Section 5.1 mentions "1000 rollback cycles" for Phase A validation.
-- **Code does:** `measure_lipschitz_drift.py` defaults to `--n-cycles 200`. Test suite uses 20 cycles.
-- **Impact:** The default configuration provides less stress testing than the paper commits to. The value is configurable via CLI, so running with `--n-cycles 1000` is trivial.
-- **Fix:** Change default to 1000 to match the paper's stated validation depth.
-- **Fix phase:** Immediate (config change)
+- **Status:** RESOLVED — `--n-cycles` default changed from 200 to 1000 in `measure_lipschitz_drift.py`. Docstring example updated to match. Verified 2026-04-30.
+- **Code does:** ~~Defaults to `--n-cycles 200`.~~ Now defaults to 1000, matching the paper's stated validation depth.
 
 ### GAP-C2-11: No perplexity drift measurement
 - **Section:** 7 (Theorem 1 Validation)
@@ -846,14 +839,11 @@ Serialise to JSON: per-node { alpha, depth, reward, telemetry, oei }
 - **Fix:** After each cycle, run a forward pass on a fixed evaluation prompt and measure perplexity. Report both tensor drift and perplexity drift in the CSV output.
 - **Fix phase:** Phase 3
 
-### GAP-C2-12: Root node has no baseline telemetry
+### GAP-C2-12: Root node has no baseline telemetry — ✅ RESOLVED
 - **Section:** 4 (MCTS Algorithm)
 - **Severity:** LOW
-- **Paper says:** N/A (not explicitly discussed).
-- **Code does:** Root node is created via `KVCacheNode.make_root()` with `telemetry=None` and `oei_score=None` (lines 543–544). The unsteered baseline state is never evaluated.
-- **Impact:** Cannot compute delta-from-baseline metrics (e.g., "how much did steering change telemetry?"). The output JSON has no reference point for what the model's natural T_t looks like before intervention.
-- **Fix:** After seeding the KV cache, read telemetry for the root node and set it as the baseline.
-- **Fix phase:** Phase 3
+- **Status:** RESOLVED — `root.telemetry = self._read_telemetry()` added immediately after `KVCacheNode.make_root()` in `run_async()`. Root now captures baseline T_t before any steering. Smoke test updated to assert root telemetry is populated. Verified 2026-04-30.
+- **Code does:** ~~Root node created with `telemetry=None`.~~ Now reads telemetry from the unsteered initial forward pass.
 
 ### GAP-C2-13: No tree reuse or warm-starting across runs
 - **Section:** 4 (MCTS Algorithm)

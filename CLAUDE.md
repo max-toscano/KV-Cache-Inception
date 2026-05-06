@@ -120,10 +120,67 @@ H-Neuron monitoring — do NOT use dense MLP neuron monitoring. See `hneuron_mon
 ## Hard Rules
 
 1. **No competition framing** in any code, comments, or docs. The paper is standalone.
-2. **Run tests before every commit:** `uv run pytest tests/ -v` — must be 100% green.
+2. **Run the full quality gate before every commit** (see Dev Commands below). All four checks
+   must pass: ruff, mypy, bandit, pytest.
 3. Phase 2 changes are **additive only** — never remove existing `logomesh/` module interfaces.
 4. The paper's subject of monitoring is the **model under study itself** (detecting alignment
    faking in its own representations), not an external proxy model.
+5. **Run the code review agent before completing any task** that modifies `logomesh/` or
+   `scripts/` files. Do not present work as done until the review agent has passed. If it
+   flags issues, fix them before committing. This is not optional.
+
+---
+
+## Paper-to-Code Verification (Mandatory)
+
+Before modifying any `logomesh/` module:
+
+1. **Read the paper equation** this code implements from the Key Paper Equations section below.
+2. **Read the gap analysis doc** for the relevant contribution (see Gap Tracking below).
+3. **After writing code**, show the mapping: paper symbol to code variable, paper operation
+   to code operation. Example: "Eq. 3 `a_j^(l)` = `activation_row[i]`, `ReLU` = `max(0, ...)`".
+4. **Flag any divergence** between paper and code explicitly. Do not silently approximate.
+
+Reference files:
+- `docs/NeurIPS/04.18.2026-NeurIPS-Research-Proposal-2.tex` (canonical paper)
+- `docs/contribution-1-telemetry-matrix.md` (C1 gaps)
+- `docs/contribution-2-reversible-mcts.md` (C2 gaps)
+- `docs/contribution-3-orthogonal-escape.md` (C3 gaps)
+
+---
+
+## Test Requirements
+
+Every change to a `logomesh/` module must include or update a test that exercises the
+**actual changed code path** with non-trivial inputs. Tests using `_Fake*` stubs only
+verify downstream consumers — the changed module itself needs a test with realistic
+mock data that flows through the real implementation.
+
+For formula implementations (Eq. 3, 4, 5, 8, 10, etc.): include a test with known inputs
+where the expected output is hand-calculated from the paper equation.
+
+| Module | Test File | What Must Be Tested |
+|---|---|---|
+| `hneuron_monitor.py` | `test_phase2_modules.py` | `_calibrate_dense()` with per-layer tensor data, `score_per_layer()` with real tensors |
+| `whitebox.py` | `test_whitebox.py` | `PerLayerHonestyProjector.project()` with tensor inputs |
+| `telemetry_matrix.py` | `test_phase2_modules.py` | `classify()` threshold edge cases, `compute_node_reward()` against Eq. 8 |
+| `orthogonal_escape.py` | `test_phase2_modules.py` | `OEICalculator.compute()` against Eq. 10 (delta formula) |
+| `kv_mcts.py` | `test_phase2_modules.py` | `FP32Accumulator` apply/rollback with realistic shapes, `_read_telemetry()` integration |
+
+---
+
+## Gap Tracking
+
+38 gaps between paper claims and code implementation are documented across three files.
+These are the source of truth — do not duplicate gap data here.
+
+Before modifying any `logomesh/` module, read the relevant gap analysis:
+- Contribution 1 (T_t, sigma_H, rho_R): `docs/contribution-1-telemetry-matrix.md`
+- Contribution 2 (MCTS, FP32, memory): `docs/contribution-2-reversible-mcts.md`
+- Contribution 3 (OEI, TDS, NullSpace): `docs/contribution-3-orthogonal-escape.md`
+
+When a gap is resolved, update the contribution doc to mark it done and note the gap ID
+in the session log.
 
 ---
 
@@ -135,8 +192,9 @@ H-Neuron monitoring — do NOT use dense MLP neuron monitoring. See `hneuron_mon
 **MCTS reward** (Eq. 8):
 `r(node) = λ₁·σ̄_H + λ₂·(1 - ρ̄_R) + λ₃·Divergence(σ_H, ρ_R)`
 
-**OEI** (Eq. 10):
-`OEI = ‖Proj_Null(P)(h_steered)‖₂ / ‖Proj_Null(P)(h_base)‖₂`
+**OEI** (Eq. 10, revised April 21):
+`OEI = ‖Proj_Null(P)(h_steered - h_base)‖₂ / ‖h_steered - h_base‖₂`
+Range [0, 1]. OEI -> 1 = Orthogonal Escape. OEI -> 0 = normal response.
 
 **Reversibility** (Eq. 6):
 `A^(ℓ) ← A^(ℓ) + α·d^(ℓ)` (FP32), `K_t ← K_base + cast_bf16(A^(ℓ))`
@@ -146,7 +204,18 @@ H-Neuron monitoring — do NOT use dense MLP neuron monitoring. See `hneuron_mon
 ## Dev Commands
 
 ```bash
-uv run pytest tests/ -v                           # must be 100% green before every commit
+# QUALITY GATE — run ALL FOUR before every commit (in this order):
+ruff check logomesh/ scripts/                      # lint + style (must pass clean)
+mypy logomesh/ --ignore-missing-imports            # type check (no new errors in changed files)
+bandit -r logomesh/ -q                             # security scan (must pass clean)
+uv run pytest tests/ -v                            # full test suite (must be 100% green)
+
+# If any of the above fail on a file you changed, fix it before committing.
+
+# Pre-commit hook (one-time setup — enforces the quality gate automatically):
+pip install pre-commit && pre-commit install
+
+# General
 uv sync                                            # install/update deps
 
 # Phase 2 runners — model must match paper (Llama-3.2-1B-Instruct, hidden dim 2048, 22 layers)

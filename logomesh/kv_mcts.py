@@ -61,9 +61,11 @@ logger = logging.getLogger(__name__)
 # KV cache helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_transformers_version() -> str:
     try:
         import transformers
+
         return transformers.__version__
     except Exception:
         return "unknown"
@@ -114,9 +116,12 @@ def _extract_kv_tensors(past_key_values: Any) -> list[tuple[Any, Any]]:
     # Explicit DynamicCache check (Transformers 5.x live formats)
     try:
         from transformers.cache_utils import DynamicCache
+
         if isinstance(past_key_values, DynamicCache):
             # Transformers <=5.2 style: list-valued key_cache/value_cache
-            if hasattr(past_key_values, "key_cache") and hasattr(past_key_values, "value_cache"):
+            if hasattr(past_key_values, "key_cache") and hasattr(
+                past_key_values, "value_cache"
+            ):
                 kc = past_key_values.key_cache
                 vc = past_key_values.value_cache
                 if isinstance(kc, (list, tuple)) and isinstance(vc, (list, tuple)):
@@ -140,7 +145,9 @@ def _extract_kv_tensors(past_key_values: Any) -> list[tuple[Any, Any]]:
         pass
 
     # Duck-typing fallback: any Cache subclass whose .key_cache / .value_cache are lists
-    if hasattr(past_key_values, "key_cache") and hasattr(past_key_values, "value_cache"):
+    if hasattr(past_key_values, "key_cache") and hasattr(
+        past_key_values, "value_cache"
+    ):
         kc = past_key_values.key_cache
         vc = past_key_values.value_cache
         if isinstance(kc, (list, tuple)) and isinstance(vc, (list, tuple)):
@@ -186,27 +193,30 @@ def _kv_snapshot_tuple(past_key_values: Any) -> tuple:
     model between apply() and rollback(). Passing a tuple snapshot instead of the
     live DynamicCache prevents .update() from being called.
     """
-    return tuple((k.detach(), v.detach()) for k, v in _extract_kv_tensors(past_key_values))
+    return tuple(
+        (k.detach(), v.detach()) for k, v in _extract_kv_tensors(past_key_values)
+    )
 
 
 def _kv_eval_cache(past_key_values: Any) -> Any:
-        """Return an evaluation-safe cache snapshot for one-step forward passes.
+    """Return an evaluation-safe cache snapshot for one-step forward passes.
 
-        Why this exists:
-            - For tuple/list caches, a detached tuple view is sufficient and cheap.
-            - For DynamicCache-style objects, many model forwards expect cache methods
-                like get_seq_length(). Passing a tuple can fail. In those cases we pass
-                a deep-copied cache object so model-side update() calls do not mutate
-                the live cache tracked by FP32Accumulator.
-        """
-        if isinstance(past_key_values, (tuple, list)):
-                return _kv_snapshot_tuple(past_key_values)
-        return _clone_kv_cache(past_key_values)
+    Why this exists:
+        - For tuple/list caches, a detached tuple view is sufficient and cheap.
+        - For DynamicCache-style objects, many model forwards expect cache methods
+            like get_seq_length(). Passing a tuple can fail. In those cases we pass
+            a deep-copied cache object so model-side update() calls do not mutate
+            the live cache tracked by FP32Accumulator.
+    """
+    if isinstance(past_key_values, (tuple, list)):
+        return _kv_snapshot_tuple(past_key_values)
+    return _clone_kv_cache(past_key_values)
 
 
 # ---------------------------------------------------------------------------
 # FP32 Accumulator — Theorem 1 exact reversibility
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class FP32Accumulator:
@@ -226,8 +236,8 @@ class FP32Accumulator:
         v_accum: Cumulative V delta in FP32.
     """
 
-    k_base: list[Any]   # baseline K per layer (original model dtype)
-    v_base: list[Any]   # baseline V per layer
+    k_base: list[Any]  # baseline K per layer (original model dtype)
+    v_base: list[Any]  # baseline V per layer
     k_accum: list[Any]  # A_K^(l) in FP32
     v_accum: list[Any]  # A_V^(l) in FP32
 
@@ -260,15 +270,22 @@ class FP32Accumulator:
         alpha: float,
         dk_vectors: list[np.ndarray],
         dv_vectors: list[np.ndarray] | None = None,
-    ) -> None:
+    ) -> bool:
         """Apply steering: A^(l) += α·d^(l), K^(l) = K_base^(l) + cast(A^(l)).
         Modifies past_key_values in-place.
+
+        Uses two-pass pre-validation: all broadcasts are validated before any
+        accumulator is mutated.  If any layer's broadcast fails, the method
+        returns False and no state is changed.
 
         Args:
             past_key_values: Live KV cache to mutate.
             alpha: Steering magnitude.
             dk_vectors: Per-layer K steering directions d_K^(l), as np.ndarray [d_k].
             dv_vectors: Per-layer V steering directions (same as dk if None).
+
+        Returns:
+            True if steering was applied, False if a shape mismatch prevented it.
         """
         import torch
 
@@ -277,25 +294,45 @@ class FP32Accumulator:
 
         layers = _extract_kv_tensors(past_key_values)
         n = min(len(layers), len(dk_vectors), len(self.k_accum))
+
+        # Pass 1: pre-validate all broadcasts (no mutations)
+        broadcast_results: list[tuple[Any, Any]] = []
         for l_idx in range(n):
             k_live, v_live = layers[l_idx]
-            dk = torch.from_numpy(dk_vectors[l_idx]).to(device=k_live.device, dtype=torch.float32)
-            dv = torch.from_numpy(dv_vectors[l_idx]).to(device=v_live.device, dtype=torch.float32)
+            dk = torch.from_numpy(dk_vectors[l_idx]).to(
+                device=k_live.device, dtype=torch.float32
+            )
+            dv = torch.from_numpy(dv_vectors[l_idx]).to(
+                device=v_live.device, dtype=torch.float32
+            )
 
-            # Broadcast dk/dv to match cache shape [..., seq, d_head] or similar
-            dk = _broadcast_to(dk, k_live.shape)
-            dv = _broadcast_to(dv, v_live.shape)
+            dk, dk_ok = _broadcast_to(dk, k_live.shape)
+            dv, dv_ok = _broadcast_to(dv, v_live.shape)
+
+            if not dk_ok or not dv_ok:
+                return False
+
+            broadcast_results.append((dk, dv))
+
+        # Pass 2: all broadcasts valid — apply mutations
+        for l_idx in range(n):
+            k_live, v_live = layers[l_idx]
+            dk, dv = broadcast_results[l_idx]
 
             self.k_accum[l_idx].add_(alpha * dk)
             self.v_accum[l_idx].add_(alpha * dv)
 
             # Reconstruct: K = K_base + cast(A) [Eq. 6]
             k_live.copy_(
-                self.k_base[l_idx] + self.k_accum[l_idx].to(dtype=self.k_base[l_idx].dtype)
+                self.k_base[l_idx]
+                + self.k_accum[l_idx].to(dtype=self.k_base[l_idx].dtype)
             )
             v_live.copy_(
-                self.v_base[l_idx] + self.v_accum[l_idx].to(dtype=self.v_base[l_idx].dtype)
+                self.v_base[l_idx]
+                + self.v_accum[l_idx].to(dtype=self.v_base[l_idx].dtype)
             )
+
+        return True
 
     def rollback(
         self,
@@ -303,10 +340,17 @@ class FP32Accumulator:
         alpha: float,
         dk_vectors: list[np.ndarray],
         dv_vectors: list[np.ndarray] | None = None,
-    ) -> None:
+    ) -> bool:
         """Reverse steering: A^(l) -= α·d^(l), K^(l) = K_base^(l) + cast(A^(l)).
 
+        Uses two-pass pre-validation: all broadcasts are validated before any
+        accumulator is mutated.  If any layer's broadcast fails, the method
+        returns False and no state is changed.
+
         Args: same as apply().
+
+        Returns:
+            True if rollback was applied, False if a shape mismatch prevented it.
         """
         import torch
 
@@ -315,23 +359,44 @@ class FP32Accumulator:
 
         layers = _extract_kv_tensors(past_key_values)
         n = min(len(layers), len(dk_vectors), len(self.k_accum))
+
+        # Pass 1: pre-validate all broadcasts (no mutations)
+        broadcast_results: list[tuple[Any, Any]] = []
         for l_idx in range(n):
             k_live, v_live = layers[l_idx]
-            dk = torch.from_numpy(dk_vectors[l_idx]).to(device=k_live.device, dtype=torch.float32)
-            dv = torch.from_numpy(dv_vectors[l_idx]).to(device=v_live.device, dtype=torch.float32)
+            dk = torch.from_numpy(dk_vectors[l_idx]).to(
+                device=k_live.device, dtype=torch.float32
+            )
+            dv = torch.from_numpy(dv_vectors[l_idx]).to(
+                device=v_live.device, dtype=torch.float32
+            )
 
-            dk = _broadcast_to(dk, k_live.shape)
-            dv = _broadcast_to(dv, v_live.shape)
+            dk, dk_ok = _broadcast_to(dk, k_live.shape)
+            dv, dv_ok = _broadcast_to(dv, v_live.shape)
+
+            if not dk_ok or not dv_ok:
+                return False
+
+            broadcast_results.append((dk, dv))
+
+        # Pass 2: all broadcasts valid — apply rollback mutations
+        for l_idx in range(n):
+            k_live, v_live = layers[l_idx]
+            dk, dv = broadcast_results[l_idx]
 
             self.k_accum[l_idx].sub_(alpha * dk)
             self.v_accum[l_idx].sub_(alpha * dv)
 
             k_live.copy_(
-                self.k_base[l_idx] + self.k_accum[l_idx].to(dtype=self.k_base[l_idx].dtype)
+                self.k_base[l_idx]
+                + self.k_accum[l_idx].to(dtype=self.k_base[l_idx].dtype)
             )
             v_live.copy_(
-                self.v_base[l_idx] + self.v_accum[l_idx].to(dtype=self.v_base[l_idx].dtype)
+                self.v_base[l_idx]
+                + self.v_accum[l_idx].to(dtype=self.v_base[l_idx].dtype)
             )
+
+        return True
 
     def residual_norm(self) -> float:
         """‖A_K‖_∞ over all layers — should be ~0 after complete rollback.
@@ -345,12 +410,17 @@ class FP32Accumulator:
         return float(max(a.abs().max().item() for a in self.k_accum))
 
 
-def _broadcast_to(vec, target_shape) -> Any:
+def _broadcast_to(vec, target_shape) -> tuple[Any, bool]:
     """Broadcast a 1-D steering vector to a target KV tensor shape.
 
     KV cache tensors have shape [batch, heads, seq, d_head] or [batch, seq, d_head].
     The steering vector has shape [d_model] or [d_head].  We expand it along
     all leading dimensions so the add_ is valid.
+
+    Returns:
+        (broadcast_tensor, success): The broadcast tensor and whether the
+        broadcast succeeded.  On shape mismatch the tensor is zeros and
+        success is False.
     """
     import torch
 
@@ -363,13 +433,20 @@ def _broadcast_to(vec, target_shape) -> Any:
             vec = vec.expand(target_shape)
         else:
             # Shape mismatch — return zeros of correct shape (safe no-op)
-            return torch.zeros(target_shape, dtype=vec.dtype, device=vec.device)
-    return vec
+            logger.warning(
+                "_broadcast_to: shape mismatch — vec last dim %d != target last dim %d. "
+                "Steering delta zeroed; this node's telemetry is invalid.",
+                vec.shape[0],
+                target_shape[-1],
+            )
+            return torch.zeros(target_shape, dtype=vec.dtype, device=vec.device), False
+    return vec, True
 
 
 # ---------------------------------------------------------------------------
 # KVCacheNode — MCTS tree node
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class KVCacheNode:
@@ -401,7 +478,9 @@ class KVCacheNode:
 
     @classmethod
     def make_root(cls) -> "KVCacheNode":
-        return cls(node_id=str(uuid.uuid4()), parent_id=None, depth=0, alpha=0.0, layer=-1)
+        return cls(
+            node_id=str(uuid.uuid4()), parent_id=None, depth=0, alpha=0.0, layer=-1
+        )
 
     @property
     def mean_reward(self) -> float:
@@ -416,12 +495,15 @@ class KVCacheNode:
         """
         if self.visit_count == 0:
             return float("inf")
-        return self.mean_reward + c * math.sqrt(2.0 * math.log(max(parent_visits, 1)) / self.visit_count)
+        return self.mean_reward + c * math.sqrt(
+            2.0 * math.log(max(parent_visits, 1)) / self.visit_count
+        )
 
 
 # ---------------------------------------------------------------------------
 # MCTS configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class MCTSConfig:
@@ -450,6 +532,7 @@ class MCTSConfig:
 # ---------------------------------------------------------------------------
 # ReversibleMCTS — main algorithm
 # ---------------------------------------------------------------------------
+
 
 class ReversibleMCTS:
     """Reversible Monte Carlo Tree Search in KV-Cache Latent Space.
@@ -536,11 +619,14 @@ class ReversibleMCTS:
         # Steering vectors from RepE projector (honesty direction = d_K^(l))
         steering_vecs = self._repe.steering_vectors
         if not steering_vecs:
-            logger.warning("PerLayerHonestyProjector has no steering vectors. Run calibrate() first.")
+            logger.warning(
+                "PerLayerHonestyProjector has no steering vectors. Run calibrate() first."
+            )
             steering_vecs = [np.zeros(1)]
 
-        # Root node
+        # Root node — evaluate baseline telemetry before any steering
         root = KVCacheNode.make_root()
+        root.telemetry = self._read_telemetry()
         self._nodes[root.node_id] = root
 
         n_expanded = 0
@@ -552,7 +638,9 @@ class ReversibleMCTS:
                 continue
 
             # Expansion: try each alpha as a child
-            alphas_to_try = list(self._config.alpha_values)[: self._config.branching_factor]
+            alphas_to_try = list(self._config.alpha_values)[
+                : self._config.branching_factor
+            ]
             for alpha in alphas_to_try:
                 if n_expanded >= self._config.n_nodes:
                     break
@@ -568,7 +656,16 @@ class ReversibleMCTS:
 
                 # Apply steering to KV cache (in-place, FP32 accumulator)
                 dk = steering_vecs[min(steer_layer, len(steering_vecs) - 1)]
-                accumulator.apply(past_kv, alpha, [dk] * len(accumulator.k_accum))
+                steering_ok = accumulator.apply(
+                    past_kv, alpha, [dk] * len(accumulator.k_accum)
+                )
+                if not steering_ok:
+                    logger.warning(
+                        "Steering shape mismatch at layer %d, alpha=%.2f — skipping node.",
+                        steer_layer,
+                        alpha,
+                    )
+                    continue  # No rollback needed — apply() made no mutations
 
                 # One-step forward pass with mutated KV cache.
                 # Pass a detached tuple snapshot, not the live DynamicCache, so
@@ -582,7 +679,14 @@ class ReversibleMCTS:
                     )
                 except Exception as e:
                     logger.warning("MCTS generate_one_step failed: %s", e)
-                    accumulator.rollback(past_kv, alpha, [dk] * len(accumulator.k_accum))
+                    rb_ok = accumulator.rollback(
+                        past_kv, alpha, [dk] * len(accumulator.k_accum)
+                    )
+                    if not rb_ok:
+                        raise RuntimeError(
+                            f"Rollback failed after successful apply at depth={parent.depth + 1}, "
+                            f"alpha={alpha} — FP32 accumulator shape invariant violated."
+                        )
                     continue
 
                 # Read telemetry T_t
@@ -596,14 +700,26 @@ class ReversibleMCTS:
                         h_steered = hs_now[steer_layer].float().detach().cpu().numpy()
                         try:
                             child.oei_score = self._oei_calc.compute(h_base, h_steered)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning(
+                                "OEI computation failed for node %s: %s",
+                                child_id,
+                                exc,
+                                exc_info=True,
+                            )
 
                 # Reward
                 reward = compute_node_reward(T, self._config.reward_lambdas)
 
                 # Rollback (Theorem 1 reversibility)
-                accumulator.rollback(past_kv, alpha, [dk] * len(accumulator.k_accum))
+                rb_ok = accumulator.rollback(
+                    past_kv, alpha, [dk] * len(accumulator.k_accum)
+                )
+                if not rb_ok:
+                    raise RuntimeError(
+                        f"Rollback failed after successful apply at depth={parent.depth + 1}, "
+                        f"alpha={alpha} — FP32 accumulator shape invariant violated."
+                    )
 
                 # Register child and backpropagate
                 parent.children.append(child_id)
@@ -614,7 +730,9 @@ class ReversibleMCTS:
 
         logger.info(
             "MCTS complete: %d nodes expanded, steer_layer=%d, residual_norm=%.2e",
-            n_expanded, steer_layer, accumulator.residual_norm(),
+            n_expanded,
+            steer_layer,
+            accumulator.residual_norm(),
         )
 
         return sorted(self._nodes.values(), key=lambda n: n.mean_reward, reverse=True)
@@ -649,7 +767,9 @@ class ReversibleMCTS:
         while node.children:
             best_child = max(
                 (self._nodes[cid] for cid in node.children),
-                key=lambda c: c.ucb1_score(node.visit_count, self._config.exploration_constant),
+                key=lambda c: c.ucb1_score(
+                    node.visit_count, self._config.exploration_constant
+                ),
             )
             if best_child.visit_count == 0:
                 return best_child
@@ -664,5 +784,6 @@ class ReversibleMCTS:
             current.reward_sum += reward
             pid = current.parent_id
             current = self._nodes.get(pid) if pid else None
+
 
 # Touch marker: 2026-04-14 commit-date-check.

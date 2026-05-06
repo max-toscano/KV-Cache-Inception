@@ -19,7 +19,7 @@ near ε_bf16 ≈ 3.9e-3 regardless of cycle count.
 Usage:
     uv run python scripts/measure_lipschitz_drift.py \\
         --model TinyLlama/TinyLlama-1.1B-Chat-v1.0 \\
-        --n-cycles 200 --alpha 0.5 --output drift_results.csv
+        --n-cycles 1000 --alpha 0.5 --output drift_results.csv
 """
 
 from __future__ import annotations
@@ -77,7 +77,9 @@ def run_probe(args: argparse.Namespace) -> list[dict]:
     tokenizer = AutoTokenizer.from_pretrained(args.model)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    model = AutoModelForCausalLM.from_pretrained(args.model, torch_dtype=torch_dtype, low_cpu_mem_usage=True)
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model, torch_dtype=torch_dtype, low_cpu_mem_usage=True
+    )
     model.to(device).eval()
     logger.info("Model loaded.")
 
@@ -115,10 +117,21 @@ def run_probe(args: argparse.Namespace) -> list[dict]:
 
     for cycle in range(1, args.n_cycles + 1):
         # ── Accumulator path: apply ──────────────────────────────────────
-        accumulator.apply(past_kv_live, args.alpha, dk_vectors)
+        ok = accumulator.apply(past_kv_live, args.alpha, dk_vectors)
+        if not ok:
+            raise RuntimeError(
+                f"FP32Accumulator.apply() failed at cycle {cycle}: "
+                "steering vector shape does not match KV cache. "
+                "Check --model matches expected architecture."
+            )
 
         # ── Accumulator path: rollback ───────────────────────────────────
-        accumulator.rollback(past_kv_live, args.alpha, dk_vectors)
+        ok = accumulator.rollback(past_kv_live, args.alpha, dk_vectors)
+        if not ok:
+            raise RuntimeError(
+                f"FP32Accumulator.rollback() failed at cycle {cycle}: "
+                "shape invariant violated after successful apply."
+            )
 
         # Measure ‖K_n − K_0‖_∞ for accumulator path
         k_now = _extract_kv_tensors(past_kv_live)[0][0].float()
@@ -136,40 +149,58 @@ def run_probe(args: argparse.Namespace) -> list[dict]:
             k_naive.sub_(args.alpha * dk_t)
         naive_inf_norm = float((k_naive.float() - k_base_f32).abs().max().item())
 
-        records.append({
-            "cycle": cycle,
-            "naive_inf_norm": naive_inf_norm,
-            "accumulator_inf_norm": acc_inf_norm,
-        })
+        records.append(
+            {
+                "cycle": cycle,
+                "naive_inf_norm": naive_inf_norm,
+                "accumulator_inf_norm": acc_inf_norm,
+            }
+        )
 
         if cycle % 50 == 0 or cycle == 1:
             logger.info(
                 "Cycle %4d: naive=%.2e  accumulator=%.2e  (residual=%.2e)",
-                cycle, naive_inf_norm, acc_inf_norm, accumulator.residual_norm(),
+                cycle,
+                naive_inf_norm,
+                acc_inf_norm,
+                accumulator.residual_norm(),
             )
 
     return records
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-                   help="Local path or HuggingFace model id")
-    p.add_argument("--n-cycles", type=int, default=200,
-                   help="Number of apply/rollback cycles to measure")
-    p.add_argument("--alpha", type=float, default=0.5,
-                   help="Steering magnitude per cycle")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--model",
+        default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        help="Local path or HuggingFace model id",
+    )
+    p.add_argument(
+        "--n-cycles",
+        type=int,
+        default=1000,
+        help="Number of apply/rollback cycles to measure",
+    )
+    p.add_argument(
+        "--alpha", type=float, default=0.5, help="Steering magnitude per cycle"
+    )
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
-    p.add_argument("--dtype", default="auto", choices=["auto", "float32", "float16", "bfloat16"])
-    p.add_argument("--output", default="drift_results.csv",
-                   help="Output CSV path")
+    p.add_argument(
+        "--dtype", default="auto", choices=["auto", "float32", "float16", "bfloat16"]
+    )
+    p.add_argument("--output", default="drift_results.csv", help="Output CSV path")
     args = p.parse_args()
 
     records = run_probe(args)
 
     output_path = Path(args.output)
     with open(output_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["cycle", "naive_inf_norm", "accumulator_inf_norm"])
+        writer = csv.DictWriter(
+            f, fieldnames=["cycle", "naive_inf_norm", "accumulator_inf_norm"]
+        )
         writer.writeheader()
         writer.writerows(records)
     logger.info("Drift results saved → %s", output_path)
@@ -177,9 +208,13 @@ def main() -> int:
     # Summary
     final = records[-1]
     print(f"\n--- Theorem 1 Drift Summary (n={args.n_cycles} cycles) ---")
-    print(f"  Naive bf16 subtraction:   ||K_n - K_0||_inf = {final['naive_inf_norm']:.4e}")
-    print(f"  FP32 accumulator:         ||K_n - K_0||_inf = {final['accumulator_inf_norm']:.4e}")
-    print(f"  eps_bf16 (theoretical):                    ~3.9e-03")
+    print(
+        f"  Naive bf16 subtraction:   ||K_n - K_0||_inf = {final['naive_inf_norm']:.4e}"
+    )
+    print(
+        f"  FP32 accumulator:         ||K_n - K_0||_inf = {final['accumulator_inf_norm']:.4e}"
+    )
+    print("  eps_bf16 (theoretical):                    ~3.9e-03")
     print(f"  Theorem 1 bound satisfied: {final['accumulator_inf_norm'] < 4e-3}")
 
     return 0

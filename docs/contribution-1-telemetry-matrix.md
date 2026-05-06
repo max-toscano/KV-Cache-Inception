@@ -503,10 +503,10 @@ function that wires Contribution 1 into Contribution 2.
 
 | Paper Claim | Code Reality | Severity | Fix Phase |
 |---|---|---|---|
-| Per-layer H-Neuron identification | Same neuron indices reused across all layers | MEDIUM | Phase 3 |
+| Per-layer H-Neuron identification | ~~Same neuron indices reused~~ **RESOLVED** — per-layer calibration implemented | ~~MEDIUM~~ | ✅ Done |
 | Per-neuron ReLU(a_j - a_bar_j) | ReLU applied to aggregate score, not per-neuron | LOW | Phase 3 |
 | LAT via PCA (Zou et al., 2023) | Difference-in-means instead of PCA | MEDIUM | Phase 3 |
-| Raw dot product rho_R = w^T * h | Rescaled: (dot + 1) / 2, clipped to [0,1] | LOW | Intentional |
+| Raw dot product rho_R = w^T * h | ~~Rescaled~~ **RESOLVED** — now returns raw dot product | ~~LOW~~ | ✅ Done |
 | Probes for honesty, certainty, goal-coercion | Only honesty implemented | MEDIUM | Phase 3 |
 | "Statistically significant divergence" for OE | Fixed JSD threshold (0.3) | LOW | Phase 3 |
 | Temporal state transitions (stable/degrading) | No temporal tracking (step always 0) | MEDIUM | Phase 3 |
@@ -527,14 +527,12 @@ function that wires Contribution 1 into Contribution 2.
 
 Every gap identified in this document, collected in one place for tracking.
 
-### GAP-C1-01: Per-layer H-Neuron sets not implemented
+### GAP-C1-01: Per-layer H-Neuron sets not implemented — ✅ RESOLVED
 - **Section:** 2 (Bottom-Up Channel)
 - **Severity:** MEDIUM
+- **Status:** RESOLVED — `_calibrate_dense()` now builds `_h_neuron_indices_per_layer` per layer (lines 236–276). `score_per_layer()` passes `layer_idx=i` to `_score_layer()`, which selects per-layer indices, baselines, and thresholds. Verified 2026-04-30.
 - **Paper says:** Eq. 3 uses `a_j^(l)` — neuron activations at layer l — implying H-Neuron identification could differ per layer.
-- **Code does:** `score_per_layer()` reuses the same TOP_K=50 neuron indices (found at last-layer calibration) for every layer. Acknowledged in docstring at `hneuron_monitor.py:179–181`.
-- **Impact:** sigma_H^(l) values across layers are less discriminative than the paper implies. All layers share the same neuron mask, so cross-layer variation comes only from activation magnitude, not from different neuron subsets.
-- **Fix:** Calibrate H-Neuron indices per layer by running contrastive activation analysis at each layer independently.
-- **Fix phase:** Phase 3
+- **Code does:** ~~`score_per_layer()` reuses the same TOP_K=50 neuron indices for every layer.~~ Now uses `_h_neuron_indices_per_layer[layer_idx]` with per-layer calibration data.
 
 ### GAP-C1-02: Per-neuron ReLU not applied
 - **Section:** 2 (Bottom-Up Channel)
@@ -572,14 +570,13 @@ Every gap identified in this document, collected in one place for tracking.
 - **Fix:** Replace difference-in-means with PCA: stack all contrastive hidden states, compute PCA, take the first principal component. Alternatively, use the `sklearn` PCA path already present in `train_lat_probes.py`'s LogisticRegression (which implicitly finds a separating direction).
 - **Fix phase:** Phase 3
 
-### GAP-C1-06: rho_R rescaled from raw dot product
+### GAP-C1-06: rho_R rescaled from raw dot product — ✅ RESOLVED
 - **Section:** 3 (Top-Down Channel)
 - **Severity:** LOW (intentional)
+- **Status:** RESOLVED — `project()` now returns `float(np.dot(w, h_np))` (raw unbounded dot product) at `whitebox.py:1458`. The `(proj + 1.0) / 2.0` rescaling has been removed. Verified 2026-04-30.
 - **Paper says:** Eq. 4: `rho_R^(l)(t) = w_hon^(l)^T * h_t^(l)` — a raw, unbounded dot product.
-- **Code does:** `project()` computes the dot product then applies `(proj + 1.0) / 2.0` and clips to [0, 1] (`whitebox.py:1456`).
-- **Impact:** Necessary for the reward function and classifier which expect [0, 1] inputs. The `+1.0` offset assumes the raw projection is centered around 0 with range roughly [-1, 1], which holds for L2-normalized w and unit-order h. If hidden state norms vary significantly across layers or models, this assumption could break and compress the dynamic range.
-- **Fix:** This is likely intentional and not a bug. Document the rescaling in the paper's methods section, or use a learned per-layer normalization (sigmoid of the projection) for robustness.
-- **Fix phase:** Clarify in paper
+- **Code does:** ~~`project()` applies `(proj + 1.0) / 2.0` and clips to [0, 1].~~ Now returns raw dot product matching Eq. 4.
+- **Remaining:** Document in Section 4.1 of the paper that rho_R is unbounded (paper-text-only).
 
 ### GAP-C1-07: Only honesty probes implemented
 - **Section:** 3 (Top-Down Channel)
@@ -637,16 +634,20 @@ Every gap identified in this document, collected in one place for tracking.
 - **Fix:** Unify into a single probe training pipeline that produces per-layer weights usable by both the offline MCTS scorer and the Phase 2 telemetry matrix.
 - **Fix phase:** Phase 3
 
-### GAP-C1-13: Test coverage gaps for integration and edge cases
+### GAP-C1-13: Test coverage gaps for integration and edge cases — ✅ RESOLVED
 - **Section:** 8 (Test Coverage)
 - **Severity:** LOW
-- **Paper says:** N/A (test coverage is not a paper claim, but is critical for correctness).
-- **Code does:** Tests cover TelemetryMatrix construction, DiagnosticState classification, and reward arithmetic. No tests for:
-  - `HNeuronMonitor.score_per_layer()` with real or mocked tensors
-  - `PerLayerHonestyProjector.project()` with tensor inputs
-  - `_read_telemetry()` end-to-end assembly
-  - Edge cases (all-zero sigma_H, all-one rho_R, mismatched layer counts)
-  - Multi-step temporal sequences
-- **Impact:** Bugs in the integration layer (assembly of T_t from live model outputs) would not be caught by the current test suite.
-- **Fix:** Add integration tests with mocked oracle hidden states that verify the full pipeline from `score_per_layer()` / `project()` through `TelemetryMatrix` to `compute_node_reward()`.
-- **Fix phase:** Phase 3
+- **Status:** RESOLVED — 35 tests total added in `test_phase2_modules.py` (77 total). Verified 2026-05-05.
+  - `TestHNeuronScorePerLayerIntegration` (7 tests) — real tensors through `score_per_layer()`
+  - `TestPerLayerHonestyProjectorIntegration` (6 tests) — real `project()` with tensor inputs
+  - `TestHNeuronEq3Divergence` (2 tests) — documents known Eq. 3 divergence with hand-calculated values
+  - `TestBroadcastToReturnFlag` (3 tests) — `_broadcast_to()` returns `(tensor, bool)`
+  - `TestApplyRollbackPhantomDetection` (4 tests) — apply/rollback return False on mismatch, atomicity
+  - `TestCalibrateDenseShapeGuard` (3 tests) — 2D rejection, 3D acceptance, KV cache immutability
+  - `TestReadTelemetryIntegration` (1 test) — real HNeuron + real RepE → `_read_telemetry()` with hand-calculated sigma_H and rho_R
+  - `TestMCTSShapeMismatchSkip` (1 test) — `run_async()` skip path, no phantom nodes
+  - `TestMCTSRollbackFailurePropagation` (1 test) — RuntimeError on failed rollback after successful apply
+  - `TestCalibrateDensePipelineScores` (1 test) — `_calibrate_dense()` → `score_per_layer()` with hand-calculated values
+  - `TestRollbackImmutability` (1 test) — KV cache + accumulator unchanged on failed rollback
+  - Root telemetry assertion in MCTS smoke test
+- **Remaining:** Multi-step temporal sequence tests (blocked on GAP-C1-10, Phase 3).

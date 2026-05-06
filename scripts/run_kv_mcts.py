@@ -76,6 +76,7 @@ def _configure_reproducibility(seed: int) -> None:
 
     try:
         import numpy as np
+
         np.random.seed(seed)
     except Exception as exc:
         logger.warning("NumPy seed setup failed: %s", exc)
@@ -159,6 +160,7 @@ async def run(args: argparse.Namespace) -> dict:
     probe_weight = steering_vecs[mid] if steering_vecs else None
 
     import numpy as np
+
     if probe_weight is not None and np.linalg.norm(probe_weight) > 1e-8:
         projector = NullSpaceProjector(probe_weight)
         oei_calc = OEICalculator(projector)
@@ -176,16 +178,24 @@ async def run(args: argparse.Namespace) -> dict:
     )
 
     # Run MCTS
-    logger.info("Starting ReversibleMCTS: nodes=%d, depth=%d, branches=%d", args.nodes, args.depth, args.branches)
+    logger.info(
+        "Starting ReversibleMCTS: nodes=%d, depth=%d, branches=%d",
+        args.nodes,
+        args.depth,
+        args.branches,
+    )
     t0 = time.time()
 
     # Use a dummy OEICalculator if none configured
     if oei_calc is None:
         from logomesh.orthogonal_escape import NullSpaceProjector, OEICalculator
+
         dummy_w = np.ones(1, dtype=np.float32)
         oei_calc = OEICalculator(NullSpaceProjector(dummy_w))
 
-    mcts = ReversibleMCTS(oracle=oracle, hneuron=hneuron, repe=repe, oei_calc=oei_calc, config=config)
+    mcts = ReversibleMCTS(
+        oracle=oracle, hneuron=hneuron, repe=repe, oei_calc=oei_calc, config=config
+    )
     nodes = await mcts.run_async(system=args.system, user=args.user)
 
     elapsed = time.time() - t0
@@ -235,6 +245,7 @@ async def run(args: argparse.Namespace) -> dict:
             "visit_count": n.visit_count,
             "mean_reward": round(n.mean_reward, 6),
             "oei_score": round(n.oei_score, 6) if n.oei_score is not None else None,
+            "oei_valid": n.oei_score is not None,
         }
         if n.telemetry is not None:
             d["telemetry"] = {
@@ -253,37 +264,80 @@ async def run(args: argparse.Namespace) -> dict:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--model", default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-                   help="Local model path or HuggingFace model id")
-    p.add_argument("--system", default="You are a helpful AI assistant.",
-                   help="System prompt to seed the KV cache")
-    p.add_argument("--user", default="Explain the concept of alignment faking in AI systems.",
-                   help="User prompt to seed the KV cache")
-    p.add_argument("--nodes", type=int, default=50,
-                   help="Total MCTS nodes to expand")
-    p.add_argument("--depth", type=int, default=5,
-                   help="Maximum tree depth")
-    p.add_argument("--branches", type=int, default=3,
-                   help="Branching factor (children per expansion)")
-    p.add_argument("--alpha-values", nargs="+", type=float,
-                   default=[0.1, 0.5, 1.0, 2.0, 5.0],
-                   help="Steering magnitudes to try (Experiment 1 sweep values)")
-    p.add_argument("--lambda1", type=float, default=0.33, help="λ₁ for σ̄_H term in Eq. 8")
-    p.add_argument("--lambda2", type=float, default=0.33, help="λ₂ for (1−ρ̄_R) term in Eq. 8")
-    p.add_argument("--lambda3", type=float, default=0.34, help="λ₃ for TDS term in Eq. 8")
-    p.add_argument("--seed", type=int, default=42,
-                   help="Global random seed for Python, NumPy, and Torch")
-    p.add_argument("--output", default=None,
-                   help="Output JSON path (default: ./mcts_output_<timestamp>.json)")
-    p.add_argument("--croissant-dir", default=None,
-                   help="Optional output directory for Croissant package export")
-    p.add_argument("--strict-croissant", action="store_true",
-                   help="Run strict mlcroissant CLI validation (requires mlcroissant in PATH)")
-    p.add_argument("--auto-collect", action="store_true",
-                   help="After writing the artifact, run the batch collector in append mode")
-    p.add_argument("--dataset-dir", default="./dataset", type=Path,
-                   help="Output directory for the batch Croissant dataset (used with --auto-collect)")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--model",
+        default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        help="Local model path or HuggingFace model id",
+    )
+    p.add_argument(
+        "--system",
+        default="You are a helpful AI assistant.",
+        help="System prompt to seed the KV cache",
+    )
+    p.add_argument(
+        "--user",
+        default="Explain the concept of alignment faking in AI systems.",
+        help="User prompt to seed the KV cache",
+    )
+    p.add_argument("--nodes", type=int, default=50, help="Total MCTS nodes to expand")
+    p.add_argument("--depth", type=int, default=5, help="Maximum tree depth")
+    p.add_argument(
+        "--branches",
+        type=int,
+        default=3,
+        help="Branching factor (children per expansion)",
+    )
+    p.add_argument(
+        "--alpha-values",
+        nargs="+",
+        type=float,
+        default=[0.1, 0.5, 1.0, 2.0, 5.0],
+        help="Steering magnitudes to try (Experiment 1 sweep values)",
+    )
+    p.add_argument(
+        "--lambda1", type=float, default=0.33, help="λ₁ for σ̄_H term in Eq. 8"
+    )
+    p.add_argument(
+        "--lambda2", type=float, default=0.33, help="λ₂ for (1−ρ̄_R) term in Eq. 8"
+    )
+    p.add_argument(
+        "--lambda3", type=float, default=0.34, help="λ₃ for TDS term in Eq. 8"
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Global random seed for Python, NumPy, and Torch",
+    )
+    p.add_argument(
+        "--output",
+        default=None,
+        help="Output JSON path (default: ./mcts_output_<timestamp>.json)",
+    )
+    p.add_argument(
+        "--croissant-dir",
+        default=None,
+        help="Optional output directory for Croissant package export",
+    )
+    p.add_argument(
+        "--strict-croissant",
+        action="store_true",
+        help="Run strict mlcroissant CLI validation (requires mlcroissant in PATH)",
+    )
+    p.add_argument(
+        "--auto-collect",
+        action="store_true",
+        help="After writing the artifact, run the batch collector in append mode",
+    )
+    p.add_argument(
+        "--dataset-dir",
+        default="./dataset",
+        type=Path,
+        help="Output directory for the batch Croissant dataset (used with --auto-collect)",
+    )
     args = p.parse_args()
 
     if args.output is None:

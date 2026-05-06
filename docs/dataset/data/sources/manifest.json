@@ -1,0 +1,149 @@
+{
+  "entries": [
+    {
+      "seq": 1,
+      "seq_name": "source_run_001.json",
+      "original_filename": "mcts_output_1776545805.json",
+      "sha256": "72b9af55666c08e0c2695a8ebc374f68fe0787bfaf8cb4164c00769e3edd185b",
+      "run_detail": {
+        "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "seed": 42,
+        "node_count": 11,
+        "run_started_utc": "2026-04-18T20:56:54.099720Z",
+        "run_finished_utc": "2026-04-18T21:02:44.835619Z",
+        "git_sha": "5f9427bdd712124dbd7a8d7fdca257a835a8a962",
+        "git_dirty": true,
+        "command": "scripts/run_kv_mcts.py --nodes 10 --depth 3 --branches 2",
+        "python_version": "3.13.13",
+        "n_nodes_config": 10,
+        "max_depth": 3,
+        "branching_factor": 2,
+        "alpha_values": [
+          0.1,
+          0.5,
+          1.0,
+          2.0,
+          5.0
+        ],
+        "system_prompt": "You are a helpful AI assistant.",
+        "user_prompt": "Explain the concept of alignment faking in AI systems."
+      }
+    },
+    {
+      "seq": 2,
+      "seq_name": "source_run_002.json",
+      "original_filename": "mcts_output_1776546841.json",
+      "sha256": "458c4d1a421e9aa18af61b38bb79a293c430e9fb98a0f0732b47a0d4ab30abd4",
+      "run_detail": {
+        "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "seed": 99,
+        "node_count": 11,
+        "run_started_utc": "2026-04-18T21:14:06.061147Z",
+        "run_finished_utc": "2026-04-18T21:17:32.744024Z",
+        "git_sha": "5f9427bdd712124dbd7a8d7fdca257a835a8a962",
+        "git_dirty": true,
+        "command": "scripts/run_kv_mcts.py --nodes 10 --depth 3 --branches 2 --seed 99",
+        "python_version": "3.13.13",
+        "n_nodes_config": 10,
+        "max_depth": 3,
+        "branching_factor": 2,
+        "alpha_values": [
+          0.1,
+          0.5,
+          1.0,
+          2.0,
+          5.0
+        ],
+        "system_prompt": "You are a helpful AI assistant.",
+        "user_prompt": "Explain the concept of alignment faking in AI systems."
+      }
+    },
+    {
+      "seq": 3,
+      "seq_name": "source_run_003.json",
+      "original_filename": "mcts_output_1776547266.json",
+      "sha256": "4c80d8df96e3da4fa890aacf15df630befd9da015c9775d26b0d932047f1a2e8",
+      "run_detail": {
+        "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "seed": 42,
+        "node_count": 11,
+        "run_started_utc": "2026-04-18T21:21:10.449576Z",
+        "run_finished_utc": "2026-04-18T21:23:47.550672Z",
+        "git_sha": "5f9427bdd712124dbd7a8d7fdca257a835a8a962",
+        "git_dirty": true,
+        "command": "scripts/run_kv_mcts.py --nodes 10 --depth 3 --auto-collect --dataset-dir ./dataset-test",
+        "python_version": "3.13.13",
+        "n_nodes_config": 10,
+        "max_depth": 3,
+        "branching_factor": 3,
+        "alpha_values": [
+          0.1,
+          0.5,
+          1.0,
+          2.0,
+          5.0
+        ],
+        "system_prompt": "You are a helpful AI assistant.",
+        "user_prompt": "Explain the concept of alignment faking in AI systems."
+      }
+    },
+    {
+      "seq": 4,
+      "seq_name": "source_run_004.json",
+      "original_filename": "mcts_output_1776566965.json",
+      "sha256": "b506e968562e062ae5398adb7bbdd8ef82df39b39a976a8a98524b74660c8d15",
+      "run_detail": {
+        "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "seed": 42,
+        "node_count": 11,
+        "run_started_utc": "2026-04-19T02:49:30.283340Z",
+        "run_finished_utc": "2026-04-19T02:52:33.429272Z",
+        "git_sha": "5f9427bdd712124dbd7a8d7fdca257a835a8a962",
+        "git_dirty": true,
+        "command": "scripts/run_kv_mcts.py --nodes 10 --depth 3 --auto-collect --dataset-dir ./docs/dataset",
+        "python_version": "3.13.13",
+        "n_nodes_config": 10,
+        "max_depth": 3,
+        "branching_factor": 3,
+        "alpha_values": [
+          0.1,
+          0.5,
+          1.0,
+          2.0,
+          5.0
+        ],
+        "system_prompt": "You are a helpful AI assistant.",
+        "user_prompt": "Explain the concept of alignment faking in AI systems."
+      }
+    },
+    {
+      "seq": 5,
+      "seq_name": "source_run_005.json",
+      "original_filename": "mcts_output_1776567696.json",
+      "sha256": "10b12f1127ac257b6ade25ce5fa6186d8dfe75b15237fb88b073bc194640c553",
+      "run_detail": {
+        "model_id": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        "seed": 42,
+        "node_count": 11,
+        "run_started_utc": "2026-04-19T03:01:41.860665Z",
+        "run_finished_utc": "2026-04-19T03:04:49.489544Z",
+        "git_sha": "5f9427bdd712124dbd7a8d7fdca257a835a8a962",
+        "git_dirty": true,
+        "command": "scripts/run_kv_mcts.py --nodes 10 --depth 3 --auto-collect --dataset-dir ./docs/dataset",
+        "python_version": "3.13.13",
+        "n_nodes_config": 10,
+        "max_depth": 3,
+        "branching_factor": 3,
+        "alpha_values": [
+          0.1,
+          0.5,
+          1.0,
+          2.0,
+          5.0
+        ],
+        "system_prompt": "You are a helpful AI assistant.",
+        "user_prompt": "Explain the concept of alignment faking in AI systems."
+      }
+    }
+  ]
+}

@@ -75,11 +75,17 @@ class HNeuronMonitor:
         self._calibrated: bool = False
 
         # Dense path calibration state
-        self._h_neuron_indices: list[int] = []     # top-K neuron indices
-        self._coherent_mean: float = 0.0           # mean score on coherent examples
+        self._h_neuron_indices: list[int] = []  # top-K neuron indices
+        self._coherent_mean: float = 0.0  # mean score on coherent examples
         self._coherent_std: float = 1.0
         self._hallucinated_mean: float = 0.0
         self._hallucinated_std: float = 1.0
+
+        # Per-layer calibration state (Paper Eq. 3: per-layer H-Neuron sets)
+        self._h_neuron_indices_per_layer: list[list[int]] = []
+        self._coherent_mean_per_layer: list[float] = []
+        self._hallucinated_mean_per_layer: list[float] = []
+        self._n_calibrated_layers: int = 0
 
         # MoE path calibration state
         self._coherent_entropy_mean: float = 0.0
@@ -112,17 +118,20 @@ class HNeuronMonitor:
             logger.warning(
                 "Only %d coherent examples provided (min %d). "
                 "Calibration may be unreliable.",
-                len(coherent_examples), MIN_CALIBRATION_EXAMPLES,
+                len(coherent_examples),
+                MIN_CALIBRATION_EXAMPLES,
             )
         if len(hallucinated_examples) < MIN_CALIBRATION_EXAMPLES:
             logger.warning(
                 "Only %d hallucinated examples provided (min %d).",
-                len(hallucinated_examples), MIN_CALIBRATION_EXAMPLES,
+                len(hallucinated_examples),
+                MIN_CALIBRATION_EXAMPLES,
             )
 
         logger.info(
             "Calibrating HNeuronMonitor: %d coherent, %d hallucinated examples",
-            len(coherent_examples), len(hallucinated_examples),
+            len(coherent_examples),
+            len(hallucinated_examples),
         )
 
         coherent_activations = await self._collect_activations(
@@ -146,9 +155,10 @@ class HNeuronMonitor:
 
         self._calibrated = True
         logger.info(
-            "Calibration complete. Mode: %s. H-Neurons: %d",
+            "Calibration complete. Mode: %s. Layers: %d. H-Neurons per layer: %d",
             "MoE/entropy" if self._is_moe else "dense/MLP",
-            0 if self._is_moe else len(self._h_neuron_indices),
+            self._n_calibrated_layers if not self._is_moe else 0,
+            len(self._h_neuron_indices) if not self._is_moe else 0,
         )
 
     # ------------------------------------------------------------------
@@ -166,7 +176,9 @@ class HNeuronMonitor:
         are cached from that forward pass and will be overwritten on the next call.
         """
         if not self._calibrated:
-            logger.warning("HNeuronMonitor.score() called before calibrate(). Returning 0.5.")
+            logger.warning(
+                "HNeuronMonitor.score() called before calibrate(). Returning 0.5."
+            )
             return 0.5
 
         if self._is_moe:
@@ -176,27 +188,26 @@ class HNeuronMonitor:
     def score_per_layer(self) -> "list[float]":
         """Return σ_H^(l) for every transformer layer, as a list of length L.
 
-        Phase 2 approximation: applies the same TOP_K neuron indices (found at
-        last-layer calibration) identically to every layer. Phase 3 will retrain
-        with per-layer honesty probes for a more paper-faithful implementation.
+        Each layer uses its own independently calibrated H-Neuron set and
+        baselines (Paper Eq. 3: per-layer contrastive activation analysis).
 
         Returns:
-            List of floats in [0.0, 1.0], length = number of transformer layers
-            (including embedding layer). Returns a list of 0.5 values if not
-            calibrated or if hidden states are unavailable.
+            List of floats in [0.0, 1.0], length = number of transformer layers.
+            Returns a list of 0.5 values if not calibrated or if hidden states
+            are unavailable.
 
         Call immediately after oracle.generate() or oracle.generate_one_step(),
         before the next forward pass overwrites the cached states.
         Used by TelemetryMatrix assembly in kv_mcts.py.
         """
-        import numpy as np
-
         hidden_states = self._oracle.get_hidden_states()
         if not hidden_states or not self._calibrated or self._is_moe:
             n = len(hidden_states) if hidden_states else 0
             return [0.5] * n
 
-        scores = [self._score_layer(h) for h in hidden_states]
+        scores = [
+            self._score_layer(h, layer_idx=i) for i, h in enumerate(hidden_states)
+        ]
         return scores
 
     # ------------------------------------------------------------------
@@ -205,50 +216,115 @@ class HNeuronMonitor:
 
     def _calibrate_dense(
         self,
-        coherent_activations: list[list[float]],
-        hallucinated_activations: list[list[float]],
+        coherent_all_layers: list[list[list[float]]],
+        hallucinated_all_layers: list[list[list[float]]],
     ) -> None:
-        """Identify top-K H-Neurons by activation difference."""
+        """Identify top-K H-Neurons per layer by activation difference.
+
+        Paper Eq. 3 defines sigma_H^(l) with per-layer neuron sets.  Each
+        layer gets its own contrastive activation analysis so cross-layer
+        variation comes from both activation magnitude AND different neuron
+        subsets.
+
+        Args:
+            coherent_all_layers: [n_examples][n_layers][hidden_size].
+            hallucinated_all_layers: same shape.
+        """
         import statistics
 
-        n_neurons = len(coherent_activations[0]) if coherent_activations else 0
-        if n_neurons == 0:
+        if not coherent_all_layers or not hallucinated_all_layers:
             return
 
-        k = min(TOP_K_NEURONS, n_neurons)
+        # Shape guard: reject 2D input [examples][neurons] from legacy callers.
+        # Expected shape is [n_examples][n_layers][hidden_size] (3D nested lists).
+        first_example = coherent_all_layers[0]
+        if first_example and not isinstance(first_example[0], (list, tuple)):
+            raise ValueError(
+                "_calibrate_dense() expects 3D input [examples][layers][neurons], "
+                f"but got 2D input — first example element is "
+                f"{type(first_example[0]).__name__}, not list. "
+                "Ensure _collect_activations() returns per-layer data."
+            )
 
-        # Per-neuron mean across examples
-        coherent_means = [
-            statistics.mean(row[i] for row in coherent_activations)
-            for i in range(n_neurons)
-        ]
-        hallucinated_means = [
-            statistics.mean(row[i] for row in hallucinated_activations)
-            for i in range(n_neurons)
-        ]
+        n_layers = len(coherent_all_layers[0])
+        if n_layers == 0:
+            return
 
-        # H-Neurons: highest (hallucinated_mean - coherent_mean)
-        diffs = [hallucinated_means[i] - coherent_means[i] for i in range(n_neurons)]
-        ranked = sorted(range(n_neurons), key=lambda i: diffs[i], reverse=True)
-        self._h_neuron_indices = ranked[:k]
+        self._n_calibrated_layers = n_layers
+        self._h_neuron_indices_per_layer = []
+        self._coherent_mean_per_layer = []
+        self._hallucinated_mean_per_layer = []
 
-        # Calibrate score distribution using top-K mean
-        coherent_scores = [
-            self._raw_dense_score(row) for row in coherent_activations
-        ]
-        hallucinated_scores = [
-            self._raw_dense_score(row) for row in hallucinated_activations
-        ]
+        for layer_idx in range(n_layers):
+            coherent_layer = [
+                ex[layer_idx] for ex in coherent_all_layers if layer_idx < len(ex)
+            ]
+            hallucinated_layer = [
+                ex[layer_idx] for ex in hallucinated_all_layers if layer_idx < len(ex)
+            ]
 
-        self._coherent_mean = statistics.mean(coherent_scores) if coherent_scores else 0.0
-        self._coherent_std = statistics.stdev(coherent_scores) if len(coherent_scores) > 1 else 1.0
-        self._hallucinated_mean = statistics.mean(hallucinated_scores) if hallucinated_scores else 1.0
+            if not coherent_layer or not hallucinated_layer:
+                self._h_neuron_indices_per_layer.append([])
+                self._coherent_mean_per_layer.append(0.0)
+                self._hallucinated_mean_per_layer.append(1.0)
+                continue
+
+            n_neurons = len(coherent_layer[0])
+            if n_neurons == 0:
+                self._h_neuron_indices_per_layer.append([])
+                self._coherent_mean_per_layer.append(0.0)
+                self._hallucinated_mean_per_layer.append(1.0)
+                continue
+
+            k = min(TOP_K_NEURONS, n_neurons)
+
+            # Per-neuron mean across examples at this layer
+            coherent_means = [
+                statistics.mean(row[i] for row in coherent_layer)
+                for i in range(n_neurons)
+            ]
+            hallucinated_means = [
+                statistics.mean(row[i] for row in hallucinated_layer)
+                for i in range(n_neurons)
+            ]
+
+            # H-Neurons for this layer: highest (hallucinated - coherent)
+            diffs = [
+                hallucinated_means[i] - coherent_means[i] for i in range(n_neurons)
+            ]
+            ranked = sorted(range(n_neurons), key=lambda i: diffs[i], reverse=True)
+            layer_indices = ranked[:k]
+            self._h_neuron_indices_per_layer.append(layer_indices)
+
+            # Calibrate score distribution for this layer
+            coherent_scores = [
+                _raw_score_with_indices(row, layer_indices) for row in coherent_layer
+            ]
+            hallucinated_scores = [
+                _raw_score_with_indices(row, layer_indices)
+                for row in hallucinated_layer
+            ]
+
+            self._coherent_mean_per_layer.append(
+                statistics.mean(coherent_scores) if coherent_scores else 0.0
+            )
+            self._hallucinated_mean_per_layer.append(
+                statistics.mean(hallucinated_scores) if hallucinated_scores else 1.0
+            )
+
+        # Backward compat: last-layer values for score() / _score_dense()
+        if self._h_neuron_indices_per_layer:
+            self._h_neuron_indices = self._h_neuron_indices_per_layer[-1]
+            self._coherent_mean = self._coherent_mean_per_layer[-1]
+            self._hallucinated_mean = self._hallucinated_mean_per_layer[-1]
 
     def _raw_dense_score(self, activation_row: list[float]) -> float:
         """Mean activation over the top-K H-Neurons for one example."""
         if not self._h_neuron_indices:
             return 0.0
-        return sum(activation_row[i] for i in self._h_neuron_indices) / len(self._h_neuron_indices)
+        return sum(activation_row[i] for i in self._h_neuron_indices) / len(
+            self._h_neuron_indices
+        )
 
     def _score_dense(self) -> float:
         """Score using cached MLP activations from LocalLlamaOracle."""
@@ -258,11 +334,13 @@ class HNeuronMonitor:
             return 0.5
         return self._score_layer(hidden_states[-1])
 
-    def _score_layer(self, h) -> float:
+    def _score_layer(self, h, layer_idx: "int | None" = None) -> float:
         """Score a single layer's hidden-state tensor.
 
         Args:
             h: Tensor of shape [hidden_size] (last-token) or [seq, hidden_size].
+            layer_idx: If provided, use per-layer calibration data. If None,
+                       falls back to last-layer calibration (backward compat).
 
         Returns:
             Float in [0.0, 1.0] normalised against calibration baselines.
@@ -275,13 +353,27 @@ class HNeuronMonitor:
         except Exception:
             return 0.5
 
-        raw = self._raw_dense_score(activation_row)
+        # Select per-layer or last-layer calibration data
+        if (
+            layer_idx is not None
+            and self._h_neuron_indices_per_layer
+            and layer_idx < len(self._h_neuron_indices_per_layer)
+        ):
+            indices = self._h_neuron_indices_per_layer[layer_idx]
+            c_mean = self._coherent_mean_per_layer[layer_idx]
+            h_mean = self._hallucinated_mean_per_layer[layer_idx]
+        else:
+            indices = self._h_neuron_indices
+            c_mean = self._coherent_mean
+            h_mean = self._hallucinated_mean
+
+        raw = _raw_score_with_indices(activation_row, indices)
 
         # Normalize: 0.0 at coherent_mean, 1.0 at hallucinated_mean
-        span = self._hallucinated_mean - self._coherent_mean
+        span = h_mean - c_mean
         if abs(span) < 1e-8:
             return 0.5
-        normalized = (raw - self._coherent_mean) / span
+        normalized = (raw - c_mean) / span
         return float(max(0.0, min(1.0, normalized)))
 
     # ------------------------------------------------------------------
@@ -299,13 +391,20 @@ class HNeuronMonitor:
         (one per example), not raw neuron activations.
         """
         import statistics
+
         # When is_moe, _collect_activations stores [entropy_score] per example
         c_entropies = [row[0] for row in coherent_activations if row]
         h_entropies = [row[0] for row in hallucinated_activations if row]
 
-        self._coherent_entropy_mean = statistics.mean(c_entropies) if c_entropies else 0.0
-        self._coherent_entropy_std = statistics.stdev(c_entropies) if len(c_entropies) > 1 else 1.0
-        self._hallucinated_entropy_mean = statistics.mean(h_entropies) if h_entropies else 1.0
+        self._coherent_entropy_mean = (
+            statistics.mean(c_entropies) if c_entropies else 0.0
+        )
+        self._coherent_entropy_std = (
+            statistics.stdev(c_entropies) if len(c_entropies) > 1 else 1.0
+        )
+        self._hallucinated_entropy_mean = (
+            statistics.mean(h_entropies) if h_entropies else 1.0
+        )
 
     def _score_moe(self) -> float:
         """Score using router logit entropy from LocalLlamaOracle (gpt-oss-20b path)."""
@@ -327,14 +426,15 @@ class HNeuronMonitor:
 
     async def _collect_activations(
         self, examples: list[str], system_prompt: str
-    ) -> list[list[float]]:
+    ) -> list:
         """Run oracle on each example and extract activations.
 
-        Returns a list (one per example) of activation vectors.
-        For dense models: last-layer hidden state mean-pooled → [hidden_size] floats.
-        For MoE models: [router_entropy_scalar] — single-element list.
+        Returns a list (one per example) of activation data.
+        For dense models: [n_examples][n_layers][hidden_size] — per-layer
+            last-token activations for per-layer H-Neuron calibration.
+        For MoE models: [n_examples][1] — router entropy scalar per example.
         """
-        results = []
+        results: list = []
         for text in examples:
             try:
                 await self._oracle.generate(system=system_prompt, user=text)
@@ -352,17 +452,20 @@ class HNeuronMonitor:
                 hidden_states = self._oracle.get_hidden_states()
                 if not hidden_states:
                     continue
-                # last hidden state: shape [hidden_size] (last token, from forward pass)
-                # or [seq, hidden_size] (if returned as full sequence) — handle both.
-                last_layer = hidden_states[-1]
-                try:
-                    if last_layer.dim() == 1:
-                        row = last_layer.tolist()   # [hidden_size] — already last token
-                    else:
-                        row = last_layer[-1].tolist()  # [seq, hidden] → take last token
-                    results.append(row)
-                except Exception as e:
-                    logger.error("Failed to extract activations: %s", e)
+                # Collect last-token activations from ALL layers for per-layer
+                # H-Neuron calibration (Paper Eq. 3: sigma_H^(l)).
+                example_layers: list[list[float]] = []
+                for hs in hidden_states:
+                    try:
+                        if hs.dim() == 1:
+                            row = hs.tolist()
+                        else:
+                            row = hs[-1].tolist()
+                        example_layers.append(row)
+                    except Exception as e:
+                        logger.debug("Failed to extract layer activation: %s", e)
+                if example_layers:
+                    results.append(example_layers)
 
         return results
 
@@ -370,6 +473,14 @@ class HNeuronMonitor:
 # ------------------------------------------------------------------
 # Utilities
 # ------------------------------------------------------------------
+
+
+def _raw_score_with_indices(activation_row: list[float], indices: list[int]) -> float:
+    """Mean activation over given neuron indices for one example."""
+    if not indices:
+        return 0.0
+    return sum(activation_row[i] for i in indices) / len(indices)
+
 
 def _compute_router_entropy(router_logits: list) -> float:
     """Compute mean per-token entropy over all MoE routing layers.
@@ -381,7 +492,6 @@ def _compute_router_entropy(router_logits: list) -> float:
     Returns:
         Mean routing entropy in nats. Higher = more uncertain = hallucinating.
     """
-    import math
 
     entropies = []
     for logits in router_logits:
