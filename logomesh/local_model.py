@@ -28,7 +28,15 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     import torch
 
+try:
+    from jinja2 import TemplateError as _Jinja2TemplateError
+except ImportError:  # jinja2 not installed (unlikely — transitive dep of transformers)
+    _Jinja2TemplateError = Exception  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
+
+# Exception types raised by tokenizer.apply_chat_template() on template issues.
+_TEMPLATE_ERRORS = (ValueError, TypeError, KeyError, _Jinja2TemplateError)
 
 
 def _resolve_model_ref(model_path: str) -> str:
@@ -259,7 +267,11 @@ class LocalLlamaOracle:
             prompt = self._tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-        except Exception:
+        except _TEMPLATE_ERRORS as e:
+            logger.warning(
+                "Chat template failed (%s: %s), falling back to manual format.",
+                type(e).__name__, e,
+            )
             prompt = f"<|system|>{system}<|user|>{user}<|assistant|>"
 
         inputs = self._tokenizer(prompt, return_tensors="pt").to(self._device)
@@ -333,7 +345,11 @@ class LocalLlamaOracle:
                 prompt = self._tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
                 )
-            except Exception:
+            except (ValueError, TypeError, KeyError) as e:
+                logger.warning(
+                    "Chat template failed (%s: %s), falling back to manual format.",
+                    type(e).__name__, e,
+                )
                 prompt = f"<|system|>{system}<|user|>{user}<|assistant|>"
             model_inputs = self._tokenizer(prompt, return_tensors="pt").to(self._device)
         else:

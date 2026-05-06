@@ -161,14 +161,20 @@ class TestClassifyConfig:
 
 class TestComputeNodeReward:
     def test_known_inputs(self):
+        import math
+
         T = TelemetryMatrix(
             h_neuron=np.full(4, 0.8),  # σ̄_H = 0.8
-            repe_honesty=np.full(4, 0.2),  # ρ̄_R = 0.2  → (1-ρ̄_R) = 0.8
+            repe_honesty=np.full(4, 0.2),  # ρ̄_R = 0.2 (raw dot product)
             step=0,
         )
+        # sigmoid(0.2) ≈ 0.5498, so (1 - sigmoid(0.2)) ≈ 0.4502
         # JSD of identical distributions = 0
+        # r = 0.5 * 0.8 + 0.5 * (1 - sigmoid(0.2)) + 0.0 * 0
+        rho_norm = 1.0 / (1.0 + math.exp(-0.2))
+        expected = 0.5 * 0.8 + 0.5 * (1.0 - rho_norm)
         r = compute_node_reward(T, lambdas=(0.5, 0.5, 0.0))
-        assert abs(r - 0.5 * 0.8 - 0.5 * 0.8) < 1e-5
+        assert abs(r - expected) < 1e-5
 
     def test_reward_range(self):
         for s in np.linspace(0, 1, 5):
@@ -177,8 +183,8 @@ class TestComputeNodeReward:
                     h_neuron=np.full(3, s), repe_honesty=np.full(3, rho), step=0
                 )
                 r = compute_node_reward(T)
-                assert 0.0 <= r <= 2.0, (
-                    f"reward {r} out of expected range for s={s} rho={rho}"
+                assert 0.0 <= r <= 1.0 + 1e-6, (
+                    f"reward {r} out of expected range [0, 1] for s={s} rho={rho}"
                 )
 
 

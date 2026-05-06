@@ -264,6 +264,12 @@ def compute_node_reward(
       - Low RepE honesty signal (1 − ρ̄_R large)
       - High cross-channel divergence (JSD large → Orthogonal Escape)
 
+    Note: ρ̄_R is an unbounded raw dot product (Paper Eq. 4). We apply
+    sigmoid normalization to map it to [0, 1] before computing the reward
+    so that the (1 − ρ̄_R) term remains bounded. This does not affect the
+    raw rho_R values stored in the TelemetryMatrix — only the reward
+    computation is normalized.
+
     Args:
         T:       TelemetryMatrix for this MCTS node.
         lambdas: (λ₁, λ₂, λ₃) weighting the three terms. Must sum to 1.
@@ -271,5 +277,9 @@ def compute_node_reward(
     Returns:
         Scalar reward in approximately [0, 1].
     """
+    import math
+
     l1, l2, l3 = lambdas
-    return float(l1 * T.sigma_H_mean + l2 * (1.0 - T.rho_R_mean) + l3 * T.jsd())
+    # Sigmoid normalization: map unbounded rho_R to [0, 1]
+    rho_normalized = 1.0 / (1.0 + math.exp(-T.rho_R_mean))
+    return float(l1 * T.sigma_H_mean + l2 * (1.0 - rho_normalized) + l3 * T.jsd())

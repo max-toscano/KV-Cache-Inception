@@ -228,7 +228,8 @@ class SearchPolicy:
                     "attempts": 0, "blocked": 0, "total_reward": 0.0,
                 }
             self.strategy_stats[strategy]["attempts"] += 1
-            self.strategy_stats[strategy]["blocked"] += 1
+            if reward < 0.5:
+                self.strategy_stats[strategy]["blocked"] += 1
             self.strategy_stats[strategy]["total_reward"] += reward
 
         # Update mutation stats
@@ -238,7 +239,8 @@ class SearchPolicy:
                     "attempts": 0, "blocked": 0, "total_reward": 0.0,
                 }
             self.mutation_stats[mut]["attempts"] += 1
-            self.mutation_stats[mut]["blocked"] += 1
+            if reward < 0.5:
+                self.mutation_stats[mut]["blocked"] += 1
             self.mutation_stats[mut]["total_reward"] += reward
 
         # Failure family tracking
